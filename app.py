@@ -7,25 +7,25 @@ from datetime import datetime, timedelta
 # Set page configuration
 st.set_page_config(
     page_title="Retail Sales Intelligence Dashboard",
-    page_icon="📊",      
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for polished UI (Cleaned from hidden characters)
+# Custom CSS for polished UI
 st.markdown("""
 <style>
 .reportview-container {
     background: #f8f9fa;
 }
 div[data-testid="stMetricValue"] {
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 700;
     color: #1E3A8A;
 }
 div[data-testid="stMetricLabel"] {
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 600;
     color: #4B5563;
 }
 .insight-card {
@@ -54,46 +54,67 @@ div[data-testid="stMetricLabel"] {
 """, unsafe_allow_html=True)
 
 st.title("📊 Retail Sales Intelligence Dashboard")
-st.markdown("Analyze retail store performance, product sales trends, stock levels, and targets.")
+st.markdown("Analyze validated retail store performance, product sales trends, stock levels, and targets.")
 
+# Data Cleaning and Validation Engine
+def clean_and_validate_data(df_sales_raw):
+    df = df_sales_raw.copy()
+    
+    # 1. Parse dates and drop completely unparseable rows
+    df['week_start_date'] = pd.to_datetime(df['week_start_date'], errors='coerce')
+    df = df.dropna(subset=['week_start_date'])
+    df['week_start_date'] = df['week_start_date'].dt.strftime('%Y-%m-%d')
+    
+    # 2. Force numeric type compliance across all quantitative fields
+    numeric_cols = ['footfall', 'transactions', 'units_sold', 'gross_sales', 'discount_amount', 
+                    'net_sales', 'sales_target', 'inventory_on_hand', 'stockouts', 'returns_amount',
+                    'customer_rating', 'marketing_spend']
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+    # 3. Apply Accounting Identity Restorations to correct text anomalies and NaNs
+    mask_gross_missing = df['gross_sales'].isna() & df['net_sales'].notna() & df['discount_amount'].notna()
+    df.loc[mask_gross_missing, 'gross_sales'] = df.loc[mask_gross_missing, 'net_sales'] + df.loc[mask_gross_missing, 'discount_amount']
+    
+    mask_net_missing = df['net_sales'].isna() & df['gross_sales'].notna() & df['discount_amount'].notna()
+    df.loc[mask_net_missing, 'net_sales'] = df.loc[mask_net_missing, 'gross_sales'] - df.loc[mask_net_missing, 'discount_amount']
+    
+    mask_neg_discount = (df['discount_amount'] < 0) & df['gross_sales'].notna() & df['net_sales'].notna()
+    df.loc[mask_neg_discount, 'discount_amount'] = df.loc[mask_neg_discount, 'gross_sales'] - df.loc[mask_neg_discount, 'net_sales']
+    
+    # 4. Enforce structural boundary constraints
+    df['discount_amount'] = df['discount_amount'].clip(lower=0).fillna(0.0)
+    df['stockouts'] = df['stockouts'].clip(lower=0).fillna(0.0)
+    
+    # Fill any remaining unresolvable numeric NaN gaps with 0.0
+    for col in numeric_cols:
+        df[col] = df[col].fillna(0.0)
+        
+    return df
+
+# Helper to generate mock clean data if no file is uploaded
 def generate_mock_data():
     np.random.seed(42)
     start_date = datetime(2026, 1, 5)
     weeks = [start_date + timedelta(weeks=i) for i in range(12)]
-    
-    categories = ["Electronics", "Apparel", "Home & Kitchen", "Beauty & Personal Care", "Groceries"]
-    stores = [
-        {"store_id": 101, "store_name": "Metro Hypermarket", "region": "North", "city": "New York", "store_format": "Hypermarket"},
-        {"store_id": 102, "store_name": "Urban Express", "region": "North", "city": "Boston", "store_format": "Express"},
-        {"store_id": 103, "store_name": "Coastal Boutique", "region": "East", "city": "Miami", "store_format": "Boutique"},
-        {"store_id": 104, "store_name": "Summit Supermarket", "region": "West", "city": "Denver", "store_format": "Supermarket"},
-        {"store_id": 105, "store_name": "Pacific Hub", "region": "West", "city": "Seattle", "store_format": "Hypermarket"},
-        {"store_id": 106, "store_name": "Central Plaza Store", "region": "South", "city": "Dallas", "store_format": "Supermarket"}
-    ]
+    categories = ["Grocery", "Apparel", "Electronics", "Home", "Beauty"]
+    stores = [{"store_id": f"ST-{i:03d}", "store_name": f"Store {i}", "region": "North", "city": "City A", "store_format": "Mall"} for i in range(1, 6)]
     
     weekly_sales_data = []
     for week in weeks:
         week_str = week.strftime('%Y-%m-%d')
         for s in stores:
             for cat in categories:
-                footfall = max(int(np.random.normal(5000, 1500)), 500)
-                transactions = int(footfall * np.random.uniform(0.15, 0.45))
-                units_sold = int(transactions * np.random.uniform(1.5, 4.0))
-                gross_sales = float(units_sold * np.random.uniform(10, 80))
-                discount_amount = gross_sales * np.random.uniform(0.05, 0.25) if np.random.rand() > 0.3 else 0.0
-                net_sales = gross_sales - discount_amount
-                sales_target = net_sales * np.random.uniform(0.85, 1.25)
-                returns_amount = net_sales * np.random.uniform(0.01, 0.08) if np.random.rand() > 0.4 else 0.0
-                inventory_on_hand = int(units_sold * np.random.uniform(1.2, 5.0))
-                stockouts = int(np.random.poisson(0.5)) if inventory_on_hand < (units_sold * 1.5) else 0
-                
+                footfall = int(np.random.normal(2000, 400))
+                transactions = int(footfall * 0.25)
+                net_sales = float(transactions * 50)
                 weekly_sales_data.append({
                     "week_start_date": week_str, "region": s["region"], "store_id": s["store_id"],
                     "store_name": s["store_name"], "city": s["city"], "store_format": s["store_format"],
                     "product_category": cat, "footfall": footfall, "transactions": transactions,
-                    "units_sold": units_sold, "gross_sales": gross_sales, "discount_amount": discount_amount,
-                    "net_sales": net_sales, "sales_target": sales_target, "inventory_on_hand": inventory_on_hand,
-                    "stockouts": stockouts, "returns_amount": returns_amount, "customer_rating": 4.0, "marketing_spend": 100.0
+                    "units_sold": transactions * 2, "gross_sales": net_sales * 1.1, "discount_amount": net_sales * 0.1,
+                    "net_sales": net_sales, "sales_target": net_sales * 0.95, "inventory_on_hand": 500,
+                    "stockouts": 2, "returns_amount": net_sales * 0.02, "customer_rating": 4.2, "marketing_spend": 500.0
                 })
     return pd.DataFrame(weekly_sales_data), pd.DataFrame(stores)
 
@@ -107,36 +128,27 @@ df_sales, df_master = None, None
 
 if uploaded_sales is not None and uploaded_master is not None:
     try:
-        df_sales = pd.read_excel(uploaded_sales)
+        raw_sales = pd.read_excel(uploaded_sales)
         df_master = pd.read_excel(uploaded_master)
-        st.sidebar.success("Successfully loaded uploaded files!")
+        df_sales = clean_and_validate_data(raw_sales)
+        st.sidebar.success("Successfully loaded and validated data!")
     except Exception as e:
         st.sidebar.error(f"Error loading files: {str(e)}")
 elif use_demo:
     df_sales, df_master = generate_mock_data()
-    st.sidebar.info("Using simulated retail dataset for demonstration.")
+    st.sidebar.info("Using clean simulated dataset for display.")
 
 if df_sales is not None and df_master is not None:
     df_sales = df_sales.copy()
     df_master = df_master.copy()
     
-    numeric_cols = ['footfall', 'transactions', 'units_sold', 'gross_sales', 'discount_amount', 'net_sales', 'sales_target', 'inventory_on_hand', 'stockouts', 'returns_amount']
-    for col in numeric_cols:
-        if col in df_sales.columns:
-            df_sales[col] = pd.to_numeric(df_sales[col], errors='coerce').fillna(0.0)
-            
-    cat_cols = ['week_start_date', 'region', 'store_name', 'city', 'store_format', 'product_category']
-    for col in cat_cols:
-        if col in df_sales.columns:
-            df_sales[col] = df_sales[col].astype(str).fillna('Unknown')
-
     redundant_columns = ['store_name', 'region', 'city', 'store_format']
     df_master_clean = df_master.drop(columns=[col for col in redundant_columns if col in df_master.columns], errors='ignore')
     
     try:
         merged_df = pd.merge(df_sales, df_master_clean, on='store_id', how='inner')
     except Exception as e:
-        st.error(f"Error merging datasets: {str(e)}")
+        st.error(f"Data merge failure: Common key 'store_id' missing. Details: {str(e)}")
         st.stop()
 
     st.sidebar.header("🎯 Dashboard Filters")
@@ -163,6 +175,7 @@ if df_sales is not None and df_master is not None:
         (merged_df['product_category'].isin(selected_categories if selected_categories else categories))
     ]
     
+    # Financial Aggregations
     total_net_sales = filtered_df['net_sales'].sum()
     total_sales_target = filtered_df['sales_target'].sum()
     total_transactions = filtered_df['transactions'].sum()
@@ -177,17 +190,24 @@ if df_sales is not None and df_master is not None:
     discount_rate = (total_discounts / total_gross_sales * 100) if total_gross_sales > 0 else 0.0
     conversion_rate = (total_transactions / total_footfall * 100) if total_footfall > 0 else 0.0
 
+    # Spacious Double-Row Metric Layout (Solves Truncation)
     st.subheader("📌 Key Performance Indicators (KPIs)")
-    kpi_cols = st.columns(6)
-    kpi_cols[0].metric("Net Sales", f"${total_net_sales:,.2f}")
-    kpi_cols[1].metric("Target Achievement", f"{target_achievement:.2f}%")
-    kpi_cols[2].metric("Avg Trans Value (ATV)", f"${atv:,.2f}")
-    kpi_cols[3].metric("Return Rate %", f"{return_rate:.2f}%")
-    kpi_cols[4].metric("Discount Rate %", f"{discount_rate:.2f}%")
-    kpi_cols[5].metric("Conversion Rate %", f"{conversion_rate:.2f}%")
+    
+    row1_kpis = st.columns(3)
+    row1_kpis[0].metric("Net Sales", f"${total_net_sales:,.2f}")
+    row1_kpis[1].metric("Target Achievement", f"{target_achievement:.2f}%")
+    row1_kpis[2].metric("Avg Transaction Value (ATV)", f"${atv:,.2f}")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    row2_kpis = st.columns(3)
+    row2_kpis[0].metric("Return Rate %", f"{return_rate:.2f}%")
+    row2_kpis[1].metric("Discount Rate %", f"{discount_rate:.2f}%")
+    row2_kpis[2].metric("Conversion Rate %", f"{conversion_rate:.2f}%")
         
     st.markdown("---")
     
+    # Chart Visualizations
     st.subheader("📈 Trend & Regional Analysis")
     row1_col1, row1_col2 = st.columns([2, 1])
     
